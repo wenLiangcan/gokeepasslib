@@ -15,6 +15,7 @@ import (
 	"regexp"
 
 	"github.com/tobischo/argon2"
+	xargon2 "golang.org/x/crypto/argon2"
 )
 
 var (
@@ -62,7 +63,7 @@ func (c *DBCredentials) buildTransformedKey(db *Database) ([]byte, error) {
 			return nil, fmt.Errorf("%w: kdf parameters are missing", ErrCorruptedDatabase)
 		}
 
-		if reflect.DeepEqual(db.Header.FileHeaders.KdfParameters.UUID, KdfArgon2) {
+		if reflect.DeepEqual(db.Header.FileHeaders.KdfParameters.UUID, KdfArgon2) || reflect.DeepEqual(db.Header.FileHeaders.KdfParameters.UUID, KdfArgon2id) {
 			iterations := uint32(db.Header.FileHeaders.KdfParameters.Iterations)
 			parallelism := uint8(db.Header.FileHeaders.KdfParameters.Parallelism)
 
@@ -76,8 +77,11 @@ func (c *DBCredentials) buildTransformedKey(db *Database) ([]byte, error) {
 				)
 			}
 
-			// Argon 2
-			transformedKey = argon2.DKey(
+			derive := argon2.DKey
+			if reflect.DeepEqual(db.Header.FileHeaders.KdfParameters.UUID, KdfArgon2id) {
+				derive = xargon2.IDKey
+			}
+			transformedKey = derive(
 				transformedKey, // Master key
 				db.Header.FileHeaders.KdfParameters.Salt[:], // Salt
 				iterations, // Time cost
@@ -85,7 +89,7 @@ func (c *DBCredentials) buildTransformedKey(db *Database) ([]byte, error) {
 				parallelism, // Parallelism
 				32,          // Hash length
 			)
-		} else {
+		} else if reflect.DeepEqual(db.Header.FileHeaders.KdfParameters.UUID, KdfAES4) {
 			// AES
 			key, err := cryptAESKey(
 				transformedKey,
@@ -96,6 +100,8 @@ func (c *DBCredentials) buildTransformedKey(db *Database) ([]byte, error) {
 				return nil, err
 			}
 			transformedKey = key[:]
+		} else {
+			return nil, fmt.Errorf("%w: unsupported KDF", ErrCorruptedDatabase)
 		}
 	} else {
 		// AES
